@@ -24,6 +24,7 @@ minimumReleaseAgeExclude:
   - '@void/*'
   - react-fate
   - void
+  - '@pierre/*'
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@1.3.0
   vite-plus: 1.3.0

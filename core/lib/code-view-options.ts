@@ -1,10 +1,14 @@
 import { registerCustomTheme, setCustomExtension } from '@pierre/diffs';
 import dunkelTheme from '../themes/dunkel.json' with { type: 'json' };
+import dunkelZedTheme from '../themes/dunkel.zed.json' with { type: 'json' };
 import lichtTheme from '../themes/licht.json' with { type: 'json' };
+import lichtZedTheme from '../themes/licht.zed.json' with { type: 'json' };
 import type { DiffSection } from '../types.ts';
 
 registerCustomTheme('Licht', async () => lichtTheme as never);
 registerCustomTheme('Dunkel', async () => dunkelTheme as never);
+registerCustomTheme('Licht', async () => lichtZedTheme as never, 'zed');
+registerCustomTheme('Dunkel', async () => dunkelZedTheme as never, 'zed');
 setCustomExtension('cts', 'typescript');
 setCustomExtension('mts', 'typescript');
 
@@ -38,6 +42,7 @@ export const diffCollapsedContextThreshold = 12;
 
 export const workerHighlighterOptions = {
   maxLineDiffLength: 2000,
+  preferredHighlighter: 'highlights' as const,
   theme: {
     dark: 'Dunkel',
     light: 'Licht',

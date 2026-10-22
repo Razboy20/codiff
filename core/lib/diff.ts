@@ -250,10 +250,12 @@ export const getDiffLineCountTitle = ({ additions, deletions }: DiffLineCount) =
   )}, ${formatLineCountNumber(deletions)} removed ${pluralizeLine(deletions)}`;
 
 const createBinaryFileDiff = (file: ChangedFile, section: DiffSection): FileDiffMetadata => ({
+  additionCharacterCount: `${section.summary?.reason ?? 'Binary file changed.'}\n`.length,
   additionLines: [`${section.summary?.reason ?? 'Binary file changed.'}\n`],
   cacheKey: `summary:${file.fingerprint}:${section.id}:${section.loadState ?? 'binary'}:${
     section.summary?.reason ?? ''
   }`,
+  deletionCharacterCount: 0,
   deletionLines: [],
   hunks: [
     {
@@ -293,8 +295,10 @@ const createBinaryFileDiff = (file: ChangedFile, section: DiffSection): FileDiff
 });
 
 const createEmptyFileDiff = (file: ChangedFile, section: DiffSection): FileDiffMetadata => ({
+  additionCharacterCount: section.newFile?.contents.replaceAll('\n', '').length ?? 0,
   additionLines: section.newFile?.contents.split('\n') ?? [],
   cacheKey: `empty:${file.fingerprint}:${section.id}`,
+  deletionCharacterCount: section.oldFile?.contents.replaceAll('\n', '').length ?? 0,
   deletionLines: section.oldFile?.contents.split('\n') ?? [],
   hunks: [],
   isPartial: false,

@@ -48,6 +48,7 @@ vi.mock('@pierre/diffs/react', async () => {
         };
         renderAnnotation?: (
           annotation: { metadata: unknown },
+          fileOrDiff: unknown,
           item: CodeViewItem<unknown>,
         ) => React.ReactNode;
         renderCodeViewHeader?: () => React.ReactNode;
@@ -146,7 +147,11 @@ vi.mock('@pierre/diffs/react', async () => {
                   React.createElement(
                     React.Fragment,
                     { key: index },
-                    props.renderAnnotation?.(annotation, item),
+                    props.renderAnnotation?.(
+                      annotation,
+                      'fileDiff' in item ? item.fileDiff : item.file,
+                      item,
+                    ),
                   ),
                 )
               : null,

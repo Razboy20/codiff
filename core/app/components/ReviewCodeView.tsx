@@ -3797,6 +3797,7 @@ export function ReviewCodeView({
         },
         overflow: wordWrap ? 'wrap' : 'scroll',
         parseDiffOptions: getDiffParseOptions(showWhitespace),
+        preferredHighlighter: workerHighlighterOptions.preferredHighlighter,
         stickyHeaders: true,
         theme: {
           dark: 'Dunkel',
@@ -3956,6 +3957,7 @@ export function ReviewCodeView({
 
   const workerPoolOptions = useMemo(
     () => ({
+      mainThreadMaxCharacters: 100_000,
       poolSize: Math.min(
         maxWorkerThreads,
         Math.max(1, navigator.hardwareConcurrency || maxWorkerThreads),
@@ -4652,6 +4654,7 @@ export function ReviewCodeView({
       annotation:
         | DiffLineAnnotation<ReviewAnnotationMetadata>
         | LineAnnotation<ReviewAnnotationMetadata>,
+      _fileOrDiff: unknown,
       item: CodeViewItem<ReviewAnnotationMetadata>,
     ) => {
       if (annotation.metadata.type === 'image-preview') {
