@@ -1434,7 +1434,14 @@ if (squirrelStartup || !lock) {
       void updater?.applyLatest().catch(() => {});
     }
 
+    // Model discovery starts a login shell and an agent process. Keep it out
+    // of the initial review's CPU and disk work.
+    setTimeout(() => {
+      if (!quitting && getActiveAgent().id === 'codex') void loadCodexModels();
+    }, 1000).unref();
+
     watchConfig((nextConfig) => {
+      const previousAgent = config.settings.agentBackend;
       config = {
         ...nextConfig,
         settings: {
@@ -1453,9 +1460,8 @@ if (squirrelStartup || !lock) {
       nativeTheme.themeSource = config.settings.theme;
       sendConfigChanged();
       Menu.setApplicationMenu(buildApplicationMenu());
-      if (getActiveAgent().id === 'codex') void loadCodexModels();
+      if (previousAgent !== 'codex' && getActiveAgent().id === 'codex') void loadCodexModels();
     });
-    if (getActiveAgent().id === 'codex') void loadCodexModels();
   });
 
   app.on('will-quit', () => codexModelDiscoveryAbort.abort());

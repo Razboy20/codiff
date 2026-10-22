@@ -181,10 +181,10 @@ const createAddedMarkdownFile = (contents: string, fingerprint: string) => {
 };
 
 const editMarkdown = async (container: HTMLElement) => {
-  const button = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
-    ({ textContent }) => textContent === 'Edit Markdown',
+  const button = container.querySelector<HTMLButtonElement>(
+    '.codiff-file-header button[aria-label="Edit plan.md"]',
   );
-  expect(button).not.toBeUndefined();
+  expect(button).not.toBeNull();
   await act(async () => button?.click());
 };
 
@@ -277,9 +277,14 @@ test.each(['added', 'untracked'] as const)(
       status,
     };
     await using view = await renderReact(<ReviewCodeViewHarness files={[file]} />);
-    expect(view.container.querySelector('[aria-label="Preview plan.md"]')).not.toBeNull();
+    await waitFor(() => {
+      expect(view.container.querySelector('[aria-label="Preview plan.md"]')).not.toBeNull();
+    });
     expect(view.container.querySelector('.codiff-markdown-diff')).toBeNull();
-    expect(view.container.querySelector('[aria-label="Edit plan.md"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Edit plan.md"]:not(button)')).toBeNull();
+    expect(
+      view.container.querySelector('.codiff-file-header button[aria-label="Edit plan.md"]'),
+    ).not.toBeNull();
   },
 );
 
@@ -288,7 +293,7 @@ test('modified Markdown opens as a rendered diff and source anchors navigate to 
   await using view = await renderReact(<ReviewCodeViewHarness files={[file]} />);
   expect(view.container.querySelector('del')?.textContent).toBe('Original');
   expect(view.container.querySelector('ins')?.textContent).toBe('Updated');
-  expect(view.container.querySelector('[aria-label="Edit plan.md"]')).toBeNull();
+  expect(view.container.querySelector('[aria-label="Edit plan.md"]:not(button)')).toBeNull();
   await act(async () =>
     view.container.querySelector<HTMLButtonElement>('.codiff-markdown-source-anchor')?.click(),
   );
@@ -326,6 +331,36 @@ test('Markdown loads both revisions for patch-only reviews before showing render
     expect(view.container.querySelector('ins')?.textContent).toBe('New');
   });
   expect(onLoadSectionContents).toHaveBeenCalledOnce();
+});
+
+test('Markdown outside the rendered viewport waits to load full revisions', async () => {
+  const files = ['first.md', 'later.md'].map((path) => {
+    const file = createChangedFile(path);
+    return {
+      ...file,
+      sections: file.sections.map((section) => ({ ...section, loadState: 'ready' as const })),
+    };
+  });
+  const laterItemId = `diff:${files[1].sections[0].id}`;
+  codeViewMock.unrenderedItemIds.add(laterItemId);
+  const onLoadSectionContents = vi.fn(async (file: ChangedFile) => ({
+    newFile: { contents: 'New paragraph.\n', name: file.path },
+    oldFile: { contents: 'Old paragraph.\n', name: file.path },
+  }));
+  const props = { files, onLoadSectionContents };
+  await using view = await renderReact(<ReviewCodeViewHarness {...props} />);
+  await waitFor(() => expect(view.container.querySelector('ins')?.textContent).toBe('New'));
+  expect(onLoadSectionContents.mock.calls.map(([file]) => file.path)).toEqual(['first.md']);
+
+  codeViewMock.unrenderedItemIds.delete(laterItemId);
+  await view.rerender(
+    <ReviewCodeViewHarness {...props} scrollTarget={{ path: 'later.md', request: 1 }} />,
+  );
+  await waitFor(() => expect(view.container.querySelectorAll('ins')).toHaveLength(2));
+  expect(onLoadSectionContents.mock.calls.map(([file]) => file.path)).toEqual([
+    'first.md',
+    'later.md',
+  ]);
 });
 
 test('deleted Markdown shows the removed document', async () => {
@@ -429,15 +464,22 @@ test('finishing explicit Markdown editing flushes and returns to rendered change
   await using view = await renderReact(
     <ReviewCodeViewHarness files={[file]} onRefreshMarkdown={onRefreshMarkdown} />,
   );
+  expect(view.container.querySelector('.codiff-markdown-review-actions')).toBeNull();
+  expect(
+    view.container.querySelector('.codiff-file-header button[aria-label="Edit plan.md"]')
+      ?.textContent,
+  ).toBe('Edit');
   await editMarkdown(view.container);
-  const done = [...view.container.querySelectorAll<HTMLButtonElement>('button')].find(
-    ({ textContent }) => textContent === 'Done editing Markdown',
+  const done = view.container.querySelector<HTMLButtonElement>(
+    '.codiff-file-header button[aria-label="Done editing plan.md"]',
   );
+  expect(done?.textContent).toBe('Done');
+  expect(view.container.querySelector('.codiff-markdown-preview button')).toBeNull();
   await act(async () => done?.click());
   expect(markdownEditorMock.flush).toHaveBeenCalledOnce();
   expect(onRefreshMarkdown).toHaveBeenCalledWith(file, file.sections[0]);
   expect(view.container.querySelector('.codiff-markdown-diff')).not.toBeNull();
-  expect(view.container.querySelector('[aria-label="Edit plan.md"]')).toBeNull();
+  expect(view.container.querySelector('[aria-label="Edit plan.md"]:not(button)')).toBeNull();
 });
 
 test('a failed Markdown flush keeps the editor open and skips refreshing', async () => {
@@ -448,11 +490,11 @@ test('a failed Markdown flush keeps the editor open and skips refreshing', async
     <ReviewCodeViewHarness files={[file]} onRefreshMarkdown={onRefreshMarkdown} />,
   );
   await editMarkdown(view.container);
-  const done = [...view.container.querySelectorAll<HTMLButtonElement>('button')].find(
-    ({ textContent }) => textContent === 'Done editing Markdown',
+  const done = view.container.querySelector<HTMLButtonElement>(
+    '.codiff-file-header button[aria-label="Done editing plan.md"]',
   );
   await act(async () => done?.click());
-  expect(view.container.querySelector('[aria-label="Edit plan.md"]')).not.toBeNull();
+  expect(view.container.querySelector('[aria-label="Edit plan.md"]:not(button)')).not.toBeNull();
   expect(onRefreshMarkdown).not.toHaveBeenCalled();
 });
 
@@ -499,7 +541,7 @@ test('switching edited Markdown back to a diff flushes and refreshes it first', 
     root.render(<Harness />);
   });
   await editMarkdown(container);
-  expect(container.querySelector('[aria-label="Edit plan.md"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Edit plan.md"]:not(button)')).not.toBeNull();
   const diffButton = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
     ({ textContent }) => textContent === 'View as Diff',
   );
@@ -510,7 +552,7 @@ test('switching edited Markdown back to a diff flushes and refreshes it first', 
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   await waitFor(() => {
-    expect(container.querySelector('[aria-label="Edit plan.md"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Edit plan.md"]:not(button)')).toBeNull();
   });
   expect(order).toEqual(['flush', 'refresh']);
   expect(JSON.stringify(codeViewMock.lastItems)).toContain('# Saved');
@@ -564,7 +606,7 @@ test('combined branch Markdown edits only the final working-tree section', async
     root.render(<Harness />);
   });
   await editMarkdown(container);
-  expect(container.querySelector('[aria-label="Edit plan.md"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Edit plan.md"]:not(button)')).not.toBeNull();
   const diffButton = [...container.querySelectorAll<HTMLButtonElement>('button')]
     .filter(({ textContent }) => textContent === 'View as Diff')
     .at(-1);
@@ -574,7 +616,7 @@ test('combined branch Markdown edits only the final working-tree section', async
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   await waitFor(() => {
-    expect(container.querySelector('[aria-label="Edit plan.md"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Edit plan.md"]:not(button)')).toBeNull();
   });
   expect(order).toEqual(['flush', 'refresh']);
   expect(JSON.stringify(codeViewMock.lastItems)).toContain('# Saved');
@@ -616,10 +658,13 @@ test('combined branch-only Markdown sections remain read-only', async () => {
       />,
     );
   });
-  expect(container.querySelector('[aria-label="Edit plan.md"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Edit plan.md"]:not(button)')).toBeNull();
   expect(container.querySelector('[aria-label="Changes to plan.md"]')).not.toBeNull();
   expect(container.querySelector('.codiff-markdown-review-actions')).toBeNull();
-  expect(container.querySelector('[aria-label="Edit plan.md"]')).toBeNull();
+  expect(
+    container.querySelector('.codiff-file-header button[aria-label="Edit plan.md"]'),
+  ).toBeNull();
+  expect(container.querySelector('[aria-label="Edit plan.md"]:not(button)')).toBeNull();
 });
 
 test('read-only Markdown previews render additions and deletions', async () => {

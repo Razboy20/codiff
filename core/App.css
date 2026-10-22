@@ -2442,16 +2442,6 @@ html[data-codiff-platform='darwin'] .sidebar {
   word-break: normal;
 }
 
-.codiff-markdown-review-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: 0 0 12px;
-}
-
-.codiff-markdown-preview.editable .codiff-markdown-review-actions {
-  padding: 12px 18px 0;
-}
-
 .codiff-markdown-change {
   border-left: 3px solid var(--file-border);
   margin: 12px -12px 18px;

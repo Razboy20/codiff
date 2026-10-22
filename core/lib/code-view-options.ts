@@ -1,4 +1,4 @@
-import { registerCustomTheme, setCustomExtension } from '@pierre/diffs';
+import { preloadHighlighter, registerCustomTheme, setCustomExtension } from '@pierre/diffs';
 import dunkelTheme from '../themes/dunkel.json' with { type: 'json' };
 import lichtTheme from '../themes/licht.json' with { type: 'json' };
 import type { DiffSection } from '../types.ts';
@@ -50,6 +50,15 @@ export const workerHighlighterOptions = {
 };
 
 export const maxWorkerThreads = 3;
+
+// File metadata is fetched over IPC before CodeView mounts. Use that time to
+// load the shared highlighter that small diffs will need on the main thread.
+export const preloadCodeViewHighlighter = () =>
+  preloadHighlighter({
+    langs: ['text'],
+    preferredHighlighter: workerHighlighterOptions.preferredHighlighter,
+    themes: ['Licht', 'Dunkel'],
+  });
 
 export const codeViewUnsafeCSS = `
   :host {

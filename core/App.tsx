@@ -3,7 +3,7 @@ import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-ic
 import { PathIcon as Path } from '@phosphor-icons/react/Path';
 import { TreeStructureIcon as TreeStructure } from '@phosphor-icons/react/TreeStructure';
 import type { FileDiffLoadedFiles } from '@pierre/diffs';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CommandBar } from './app/components/CommandBar.tsx';
 import { KeyboardShortcutsHelp } from './app/components/KeyboardShortcutsHelp.tsx';
 import { OpenReviewSourceDialog } from './app/components/OpenReviewSourceDialog.tsx';
@@ -21,8 +21,11 @@ import {
   UpdatePill,
   WalkthroughOutdatedBanner,
 } from './app/components/Panels.tsx';
-import { PlanEditorView } from './app/components/PlanEditorView.tsx';
-import { ReviewCodeView, type ReviewDiffBlock } from './app/components/ReviewCodeView.tsx';
+import {
+  preloadReviewMarkdown,
+  ReviewCodeView,
+  type ReviewDiffBlock,
+} from './app/components/ReviewCodeView.tsx';
 import type { ReviewModeItem } from './app/components/ReviewModeControl.tsx';
 import { ReviewTopBar } from './app/components/ReviewTopBar.tsx';
 import { Sidebar } from './app/components/Sidebar.tsx';
@@ -66,6 +69,7 @@ import {
   type SourceSession,
   type WalkthroughNote,
 } from './lib/app-types.ts';
+import { preloadCodeViewHighlighter } from './lib/code-view-options.ts';
 import {
   isPatchOnlyDiffSection,
   shouldLoadDiffSectionContents,
@@ -130,6 +134,9 @@ import type {
 const emptyReviewComments: ReadonlyArray<ReviewComment> = [];
 const emptyWalkthroughNotes = new Map<string, WalkthroughNote>();
 const disableCodeViewWorkerPool = process.env.NODE_ENV === 'test';
+const PlanEditorView = lazy(async () => ({
+  default: (await import('./app/components/PlanEditorView.tsx')).PlanEditorView,
+}));
 
 const getFailedSectionLoadState = (section: DiffSection): DiffSection =>
   isPatchOnlyDiffSection(section)
@@ -641,21 +648,27 @@ export default function App() {
         return;
       }
 
-      const nextAgentSkillStatus = await window.codiff
-        .getAgentSkillStatus()
-        .catch(() => defaultAgentSkillStatus);
-      if (canceled) {
-        return;
+      if (!disableCodeViewWorkerPool) {
+        void preloadCodeViewHighlighter().catch(() => {});
       }
-      setAgentSkillStatus(nextAgentSkillStatus);
 
-      const nextTerminalHelperStatus = await window.codiff
+      void window.codiff
+        .getAgentSkillStatus()
+        .catch(() => defaultAgentSkillStatus)
+        .then((status) => {
+          if (!canceled) {
+            setAgentSkillStatus(status);
+          }
+        });
+
+      void window.codiff
         .getTerminalHelperStatus()
-        .catch(() => defaultTerminalHelperStatus);
-      if (canceled) {
-        return;
-      }
-      setTerminalHelperStatus(nextTerminalHelperStatus);
+        .catch(() => defaultTerminalHelperStatus)
+        .then((status) => {
+          if (!canceled) {
+            setTerminalHelperStatus(status);
+          }
+        });
 
       const nextState = await window.codiff.getRepositoryState(
         getReloadSourceForLaunch(reloadSelection, nextLaunchOptions),
@@ -669,18 +682,47 @@ export default function App() {
         ...nextState,
         files: sortFiles(nextState.files),
       };
+      if (
+        orderedState.files.some(
+          (file) =>
+            /\.md$/i.test(file.path) && (file.status === 'added' || file.status === 'untracked'),
+        )
+      ) {
+        void preloadReviewMarkdown().catch(() => {});
+      }
       const nextHistorySource: ReviewSource | null =
         getReloadHistorySource(reloadSelection, orderedState) ??
         getHistorySource(orderedState.source) ??
         null;
-      const history = await window.codiff.getRepositoryHistory(
-        HISTORY_PAGE_SIZE,
-        nextHistorySource ?? undefined,
-      );
-
-      if (canceled) {
-        return;
-      }
+      const historyRequest = ++historyRequestRef.current;
+      const sourceRequest = sourceRequestRef.current;
+      setHistoryLoading(true);
+      setHistorySource(nextHistorySource);
+      const isCurrentHistory = () =>
+        !canceled &&
+        historyRequestRef.current === historyRequest &&
+        sourceRequestRef.current === sourceRequest;
+      const loadHistory = () => {
+        void window.codiff
+          .getRepositoryHistory(HISTORY_PAGE_SIZE, nextHistorySource ?? undefined)
+          .then((history) => {
+            if (isCurrentHistory()) {
+              setHistoryEntries(history.entries);
+              setHistoryHasMore(history.entries.length >= HISTORY_PAGE_SIZE);
+              setHistoryLimit(HISTORY_PAGE_SIZE);
+            }
+          })
+          .catch(() => {
+            if (isCurrentHistory()) {
+              setHistoryHasMore(false);
+            }
+          })
+          .finally(() => {
+            if (isCurrentHistory()) {
+              setHistoryLoading(false);
+            }
+          });
+      };
 
       const filesPresent = orderedState.files.length > 0;
       const reloadSelectedPath = getReloadSelectionPath(reloadSelection, orderedState);
@@ -709,12 +751,48 @@ export default function App() {
       // when the diff is empty, so it can diagnose *why* (e.g. the changes were
       // committed) rather than us guessing in the renderer.
       const shouldFetchNarrative = shouldLoadNarrative || walkthroughFilePath != null;
-      const narrativeResult = shouldFetchNarrative
+      const narrativePromise = shouldFetchNarrative
         ? reloadFilesChanged && walkthroughFilePath == null
-          ? await window.codiff.getNarrativeWalkthrough(orderedState.source, { force: true })
-          : await window.codiff.getNarrativeWalkthrough(orderedState.source)
+          ? window.codiff.getNarrativeWalkthrough(orderedState.source, { force: true })
+          : window.codiff.getNarrativeWalkthrough(orderedState.source)
         : null;
+      // Publish the diff before history or walkthrough generation finishes.
+      const nextViewed = usesViewedFileState(orderedState.source)
+        ? readViewed(orderedState.root)
+        : {};
+      const restoreCommitView =
+        getReloadMainMode(reloadSelection, orderedState) === 'commit' &&
+        orderedState.source.type === 'working-tree' &&
+        orderedState.files.length > 0;
+      if (restoreCommitView) {
+        setSidebarMode('tree');
+        setMainMode('commit');
+      }
+
+      stateGenerationRef.current += 1;
+      stateRef.current = orderedState;
+      setState(orderedState);
+      setLoadError(null);
+      setCollapsed(getCollapsedViewedPaths(orderedState.files, nextViewed));
+      setExpandedReviewKeys(new Set());
+      setItemVersionByKey({});
+      resetCommentFocus();
+      setReloadDeltaPaths(nextReloadDeltaPaths);
+      setReviewComments(getReviewCommentsFromState(orderedState));
+      setViewed(nextViewed);
+      const nextSelectedPath = reloadSelectedPath ?? orderedState.files[0]?.path ?? null;
+      setSelectedPath(nextSelectedPath);
+      if (reloadSelectedPath) {
+        scrollPathIntoReview(reloadSelectedPath, 'instant');
+      }
+
+      loadHistory();
+
+      const narrativeResult = await narrativePromise;
       if (canceled) {
+        return;
+      }
+      if (sourceRequestRef.current !== sourceRequest) {
         return;
       }
       const loadedNarrative =
@@ -746,42 +824,6 @@ export default function App() {
       }
 
       setWalkthroughLoading(false);
-
-      const nextViewed = usesViewedFileState(orderedState.source)
-        ? readViewed(orderedState.root)
-        : {};
-      // Reopen the commit view after a reload, but only while it would still be
-      // openable (same conditions as openCommitView); e.g. once the commit
-      // lands the working tree may be empty and we fall back to the review.
-      const restoreCommitView =
-        getReloadMainMode(reloadSelection, orderedState) === 'commit' &&
-        orderedState.source.type === 'working-tree' &&
-        orderedState.files.length > 0;
-      if (restoreCommitView) {
-        setSidebarMode('tree');
-        setMainMode('commit');
-      }
-
-      setHistoryEntries(history.entries);
-      setHistoryHasMore(history.entries.length >= HISTORY_PAGE_SIZE);
-      setHistoryLimit(HISTORY_PAGE_SIZE);
-      setHistorySource(nextHistorySource ?? null);
-      stateGenerationRef.current += 1;
-      stateRef.current = orderedState;
-      setState(orderedState);
-      setLoadError(null);
-      setCollapsed(getCollapsedViewedPaths(orderedState.files, nextViewed));
-      setExpandedReviewKeys(new Set());
-      setItemVersionByKey({});
-      resetCommentFocus();
-      setReloadDeltaPaths(nextReloadDeltaPaths);
-      setReviewComments(getReviewCommentsFromState(orderedState));
-      setViewed(nextViewed);
-      const nextSelectedPath = reloadSelectedPath ?? orderedState.files[0]?.path ?? null;
-      setSelectedPath(nextSelectedPath);
-      if (reloadSelectedPath) {
-        scrollPathIntoReview(reloadSelectedPath, 'instant');
-      }
     };
 
     load().catch((error: unknown) => {
@@ -1620,7 +1662,9 @@ export default function App() {
       );
     }
     return planDocument ? (
-      <PlanEditorView document={planDocument} shareEnabled={sharePlanEnabled} />
+      <Suspense fallback={<main className="loading">Loading…</main>}>
+        <PlanEditorView document={planDocument} shareEnabled={sharePlanEnabled} />
+      </Suspense>
     ) : (
       <main className="loading">Loading…</main>
     );

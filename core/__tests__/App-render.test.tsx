@@ -375,6 +375,68 @@ const renderAppForOpenFileShortcut = async (file: ChangedFile) => {
   };
 };
 
+test('displays a diff while setup status and history are still pending', async () => {
+  const getAgentSkillStatus = vi.fn(() => new Promise<never>(() => {}));
+  const getRepositoryHistory = vi.fn(
+    () => new Promise<Awaited<ReturnType<Window['codiff']['getRepositoryHistory']>>>(() => {}),
+  );
+  window.codiff = createCodiffMock({
+    getAgentSkillStatus,
+    getRepositoryHistory,
+    getRepositoryState: vi.fn(async () => ({
+      ...repositoryState,
+      files: [createChangedFile('src/app.ts')],
+    })),
+    getTerminalHelperStatus: vi.fn(() => new Promise<never>(() => {})),
+  });
+  await using view = await renderReact(<App />);
+  await waitFor(() => {
+    expect(view.container.querySelector('.codiff-file-header')).not.toBeNull();
+    expect(view.container.querySelector('.loading')).toBeNull();
+  });
+  await waitFor(() => {
+    expect(getRepositoryHistory).toHaveBeenCalledOnce();
+  });
+  await waitFor(() => expect(getAgentSkillStatus).toHaveBeenCalledOnce());
+});
+
+test('a failed background history request does not hide the diff', async () => {
+  const getRepositoryHistory = vi.fn(async () => {
+    throw new Error('History is unavailable');
+  });
+  window.codiff = createCodiffMock({
+    getRepositoryHistory,
+    getRepositoryState: vi.fn(async () => ({
+      ...repositoryState,
+      files: [createChangedFile('src/app.ts')],
+    })),
+  });
+  await using view = await renderReact(<App />);
+  await waitFor(() => expect(getRepositoryHistory).toHaveBeenCalledOnce());
+  expect(view.container.querySelector('.codiff-file-header')).not.toBeNull();
+  expect(view.container.textContent).not.toContain('History is unavailable');
+});
+
+test('displays the repository while its initial walkthrough is being generated', async () => {
+  window.codiff = createCodiffMock({
+    getLaunchOptions: vi.fn(async () => ({
+      repositoryPathProvided: true,
+      walkthrough: true,
+    })),
+    getNarrativeWalkthrough: vi.fn(() => new Promise<never>(() => {})),
+    getRepositoryState: vi.fn(async () => ({
+      ...repositoryState,
+      files: [createChangedFile('src/app.ts')],
+    })),
+  });
+  await using view = await renderReact(<App />);
+  await waitFor(() => {
+    expect(view.container.querySelector('.app-shell')).not.toBeNull();
+    expect(view.container.querySelector('.loading')).toBeNull();
+    expect(view.container.textContent).toContain('app.ts');
+  });
+});
+
 test('code font preferences update root CSS variables', async () => {
   const nextConfig = createDefaultConfig();
   nextConfig.settings.codeFontFamily = 'JetBrains Mono';

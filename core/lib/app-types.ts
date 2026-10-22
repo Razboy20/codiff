@@ -24,7 +24,6 @@ export type CodeQualityAnnotationMetadata = {
 
 type MarkdownPreviewAnnotationMetadata = {
   contents: string;
-  editable: boolean;
   editing: boolean;
   layoutKey: string;
   oldContents?: string;
