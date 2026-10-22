@@ -73,7 +73,7 @@ import {
   DIFF_LINE_HEIGHT,
   diffCollapsedContextThreshold,
   diffContextExpansionLineCount,
-  maxWorkerThreads,
+  getCodeViewWorkerPoolOptions,
   sectionLabel,
   workerHighlighterOptions,
 } from '../../lib/code-view-options.ts';
@@ -2617,6 +2617,7 @@ export function ReviewCodeView({
   onLoadSectionContents,
   onOpenDefinition,
   onOpenFile,
+  onReady,
   onRefreshMarkdown,
   onResolveThread = noopResolveThread,
   onSaveCommentEdit,
@@ -2681,6 +2682,7 @@ export function ReviewCodeView({
   onLoadSectionContents?: (file: ChangedFile, section: DiffSection) => Promise<FileDiffLoadedFiles>;
   onOpenDefinition?: (candidate: DefinitionCandidate) => void;
   onOpenFile?: (file: ChangedFile) => void;
+  onReady?: () => void;
   onRefreshMarkdown?: (file: ChangedFile, section: DiffSection) => Promise<boolean>;
   onResolveThread?: (threadId: string, resolved: boolean) => Promise<void> | void;
   onSaveCommentEdit: (commentId: string, body: string) => Promise<void> | void;
@@ -3739,6 +3741,9 @@ export function ReviewCodeView({
           createCommentForRange(range, context);
         },
         onPostRender: (node, _instance, phase, context) => {
+          if (phase !== 'unmount') {
+            onReady?.();
+          }
           const metadata = itemMetadata.get(context.item.id);
           // Full Markdown is only needed for previews that reach the viewport.
           // Fetching every document before startup defeats CodeView's virtualization.
@@ -3825,6 +3830,7 @@ export function ReviewCodeView({
       onFindDefinitions,
       onLoadSection,
       onLoadSectionContents,
+      onReady,
       selectedHeaderItemIds,
       showWhitespace,
       source,
@@ -4022,20 +4028,7 @@ export function ReviewCodeView({
     return () => cancelAnimationFrame(frame);
   }, [itemMetadata, items, sourceKey]);
 
-  const workerPoolOptions = useMemo(
-    () => ({
-      mainThreadMaxCharacters: 100_000,
-      poolSize: Math.min(
-        maxWorkerThreads,
-        Math.max(1, navigator.hardwareConcurrency || maxWorkerThreads),
-      ),
-      workerFactory: () =>
-        new Worker(new URL('@pierre/diffs/worker/worker.js', import.meta.url), {
-          type: 'module',
-        }),
-    }),
-    [],
-  );
+  const workerPoolOptions = useMemo(() => getCodeViewWorkerPoolOptions(), []);
 
   const requestScrollTargetIntoView = useCallback(
     (

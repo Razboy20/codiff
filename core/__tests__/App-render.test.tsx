@@ -227,6 +227,7 @@ const createCodiffMock = (overrides: Partial<Window['codiff']> = {}): Window['co
   })),
   isWindowFullScreen: vi.fn(async () => false),
   markPlanReady: vi.fn(async () => {}),
+  markWindowReady: vi.fn(),
   onConfigChanged: vi.fn(() => () => {}),
   onCopyPendingCommentsRequest: vi.fn(() => () => {}),
   onFindInDiffs: vi.fn(() => () => {}),
@@ -398,6 +399,37 @@ test('displays a diff while setup status and history are still pending', async (
     expect(getRepositoryHistory).toHaveBeenCalledOnce();
   });
   await waitFor(() => expect(getAgentSkillStatus).toHaveBeenCalledOnce());
+  await waitFor(() => expect(window.codiff.markWindowReady).toHaveBeenCalledOnce());
+});
+
+test('the first review layout uses the loaded preferences', async () => {
+  const config = Promise.withResolvers<ReturnType<typeof createDefaultConfig>>();
+  const nextConfig = createDefaultConfig();
+  nextConfig.settings.sidebarPosition = 'right';
+  window.codiff = createCodiffMock({ getConfig: vi.fn(() => config.promise) });
+  await using view = await renderReact(<App />);
+  expect(view.container.querySelector('.app-shell')).toBeNull();
+  expect(window.codiff.markWindowReady).not.toHaveBeenCalled();
+  await act(async () => config.resolve(nextConfig));
+  await waitFor(() => {
+    expect(view.container.querySelector('.app-shell')?.getAttribute('data-sidebar-position')).toBe(
+      'right',
+    );
+    expect(window.codiff.markWindowReady).toHaveBeenCalledOnce();
+  });
+});
+
+test('unavailable preferences still reveal the review with defaults', async () => {
+  window.codiff = createCodiffMock({
+    getConfig: vi.fn(async () => {
+      throw new Error('Unavailable');
+    }),
+  });
+  await using view = await renderReact(<App />);
+  await waitFor(() => {
+    expect(view.container.querySelector('.app-shell')).not.toBeNull();
+    expect(window.codiff.markWindowReady).toHaveBeenCalledOnce();
+  });
 });
 
 test('a failed background history request does not hide the diff', async () => {

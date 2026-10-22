@@ -1,4 +1,5 @@
 import { preloadHighlighter, registerCustomTheme, setCustomExtension } from '@pierre/diffs';
+import { getOrCreateWorkerPoolSingleton } from '@pierre/diffs/worker';
 import dunkelTheme from '../themes/dunkel.json' with { type: 'json' };
 import lichtTheme from '../themes/licht.json' with { type: 'json' };
 import type { DiffSection } from '../types.ts';
@@ -50,6 +51,29 @@ export const workerHighlighterOptions = {
 };
 
 export const maxWorkerThreads = 3;
+
+export const getCodeViewWorkerPoolOptions = () => ({
+  mainThreadMaxCharacters: 100_000,
+  poolSize: Math.min(
+    maxWorkerThreads,
+    Math.max(1, navigator.hardwareConcurrency || maxWorkerThreads),
+  ),
+  workerFactory: () =>
+    new Worker(new URL('@pierre/diffs/worker/worker.js', import.meta.url), {
+      type: 'module',
+    }),
+});
+
+export const preloadCodeView = () => {
+  void document.fonts.load('13px "Fira Code"').catch(() => {});
+  void getOrCreateWorkerPoolSingleton({
+    highlighterOptions: workerHighlighterOptions,
+    poolOptions: getCodeViewWorkerPoolOptions(),
+  })
+    .initialize()
+    .catch(() => {});
+  void preloadCodeViewHighlighter().catch(() => {});
+};
 
 // File metadata is fetched over IPC before CodeView mounts. Use that time to
 // load the shared highlighter that small diffs will need on the main thread.

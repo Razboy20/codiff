@@ -47,6 +47,7 @@ import {
   normalizeCodeFontSizePreference,
   useDocumentAppearance,
 } from './app/hooks/useDocumentAppearance.ts';
+import { useInitialWindowReveal } from './app/hooks/useInitialWindowReveal.ts';
 import { useResizableSidebar } from './app/hooks/useResizableSidebar.ts';
 import { useReviewFileState } from './app/hooks/useReviewState.ts';
 import { createDefaultConfig } from './config/defaults.ts';
@@ -69,7 +70,6 @@ import {
   type SourceSession,
   type WalkthroughNote,
 } from './lib/app-types.ts';
-import { preloadCodeViewHighlighter } from './lib/code-view-options.ts';
 import {
   isPatchOnlyDiffSection,
   shouldLoadDiffSectionContents,
@@ -187,7 +187,16 @@ const getReloadSourceForLaunch = (
     : undefined;
 };
 
-export default function App() {
+export default function App({
+  initialConfig,
+  initialLaunchOptions,
+}: {
+  initialConfig?: CodiffConfig;
+  initialLaunchOptions?: CodiffLaunchOptions;
+} = {}) {
+  const initialPreferences = initialConfig
+    ? getPreferencesFromConfig(initialConfig)
+    : defaultPreferences;
   const [loadError, setLoadError] = useState<RepositoryLoadError | null>(null);
   const [gitIdentity, setGitIdentity] = useState<GitIdentity | null>(null);
   const [historyEntries, setHistoryEntries] = useState<ReadonlyArray<HistoryEntry>>([]);
@@ -197,12 +206,17 @@ export default function App() {
   const [historySource, setHistorySource] = useState<ReviewSource | null>(null);
   const [localChangesDetected, setLocalChangesDetected] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<CodiffUpdateStatus | null>(null);
-  const [launchOptions, setLaunchOptions] = useState<CodiffLaunchOptions>(defaultLaunchOptions);
-  const [codiffConfig, setCodiffConfig] = useState<CodiffConfig>(createDefaultConfig);
+  const [launchOptions, setLaunchOptions] = useState<CodiffLaunchOptions>(
+    initialLaunchOptions ?? defaultLaunchOptions,
+  );
+  const [codiffConfig, setCodiffConfig] = useState<CodiffConfig>(
+    initialConfig ?? createDefaultConfig,
+  );
   const [agentSkillInstalling, setAgentSkillInstalling] = useState(false);
   const [agentSkillStatus, setAgentSkillStatus] =
     useState<AgentSkillStatus>(defaultAgentSkillStatus);
-  const [preferences, setPreferences] = useState<CodiffPreferences>(defaultPreferences);
+  const [preferences, setPreferences] = useState<CodiffPreferences>(initialPreferences);
+  const [configLoaded, setConfigLoaded] = useState(initialConfig != null);
   const [reloadDeltaPaths, setReloadDeltaPaths] = useState<ReadonlySet<string>>(() => new Set());
   const [scrollTarget, setScrollTarget] = useState<ReviewScrollTarget | null>(null);
   const [fileSearchQuery, setFileSearchQuery] = useState('');
@@ -233,7 +247,7 @@ export default function App() {
   const stateRef = useRef<RepositoryState | null>(null);
   const collapsedRef = useRef<Set<string>>(new Set());
   const expandedReviewKeysRef = useRef<Set<string>>(new Set());
-  const preferencesRef = useRef<CodiffPreferences>(defaultPreferences);
+  const preferencesRef = useRef<CodiffPreferences>(initialPreferences);
   const selectedPathRef = useRef<string | null>(null);
   const sourceRequestRef = useRef(0);
   const stateGenerationRef = useRef(0);
@@ -629,7 +643,7 @@ export default function App() {
 
     const load = async () => {
       const reloadSelection = consumeReloadSelection();
-      const nextLaunchOptions = await window.codiff.getLaunchOptions();
+      const nextLaunchOptions = initialLaunchOptions ?? (await window.codiff.getLaunchOptions());
       if (canceled) {
         return;
       }
@@ -646,10 +660,6 @@ export default function App() {
           setPlanLoadError(null);
         }
         return;
-      }
-
-      if (!disableCodeViewWorkerPool) {
-        void preloadCodeViewHighlighter().catch(() => {});
       }
 
       void window.codiff
@@ -843,6 +853,7 @@ export default function App() {
       canceled = true;
     };
   }, [
+    initialLaunchOptions,
     resetCommentFocus,
     scrollPathIntoReview,
     setCollapsed,
@@ -1061,14 +1072,24 @@ export default function App() {
       () => {},
     );
 
-    window.codiff.getConfig().then((nextConfig) => {
-      if (!canceled) {
-        const nextPreferences = getPreferencesFromConfig(nextConfig);
-        preferencesRef.current = nextPreferences;
-        setCodiffConfig(nextConfig);
-        setPreferences(nextPreferences);
-      }
-    });
+    if (!initialConfig) {
+      window.codiff.getConfig().then(
+        (nextConfig) => {
+          if (!canceled) {
+            const nextPreferences = getPreferencesFromConfig(nextConfig);
+            preferencesRef.current = nextPreferences;
+            setCodiffConfig(nextConfig);
+            setPreferences(nextPreferences);
+            setConfigLoaded(true);
+          }
+        },
+        () => {
+          if (!canceled) {
+            setConfigLoaded(true);
+          }
+        },
+      );
+    }
 
     const removeConfigListener = window.codiff.onConfigChanged((nextConfig) => {
       const previousShowWhitespace = preferencesRef.current.showWhitespace;
@@ -1140,6 +1161,7 @@ export default function App() {
       removeConfigListener();
     };
   }, [
+    initialConfig,
     setCollapsed,
     setExpandedReviewKeys,
     setItemVersionByKey,
@@ -1647,6 +1669,27 @@ export default function App() {
   }, []);
 
   const activeAgentBackend = launchOptions.agentBackend ?? codiffConfig.settings.agentBackend;
+  const showAgentUnavailablePanel =
+    sidebarMode === 'walkthrough' &&
+    !narrativeWalkthrough &&
+    !walkthroughLoading &&
+    (walkthroughError?.code === 'CODEX_NOT_FOUND' ||
+      walkthroughError?.code === 'CLAUDE_NOT_FOUND' ||
+      walkthroughError?.code === 'OPENCODE_NOT_FOUND' ||
+      walkthroughError?.code === 'PI_NOT_FOUND');
+  const markInitialContentReady = useInitialWindowReveal(
+    configLoaded &&
+      Boolean(
+        loadError ||
+        planLoadError ||
+        (state &&
+          (state.files.length === 0 ||
+            visibleFiles.length === 0 ||
+            showPlainCommitView ||
+            showAgentUnavailablePanel ||
+            showNarrativeWalkthrough)),
+      ),
+  );
   const agentLabel = getAgentLabel(activeAgentBackend);
   const agentSkillLabel = `${agentLabel} Skill`;
 
@@ -1661,9 +1704,13 @@ export default function App() {
         </main>
       );
     }
-    return planDocument ? (
+    return planDocument && configLoaded ? (
       <Suspense fallback={<main className="loading">Loading…</main>}>
-        <PlanEditorView document={planDocument} shareEnabled={sharePlanEnabled} />
+        <PlanEditorView
+          document={planDocument}
+          onReady={markInitialContentReady}
+          shareEnabled={sharePlanEnabled}
+        />
       </Suspense>
     ) : (
       <main className="loading">Loading…</main>
@@ -1696,7 +1743,7 @@ export default function App() {
     );
   }
 
-  if (!state) {
+  if (!state || !configLoaded) {
     return (
       <main className={`loading${launchOptions.walkthrough ? ' codex' : ' pulse'}`}>
         {launchOptions.walkthrough ? (
@@ -1719,14 +1766,6 @@ export default function App() {
       : (visibleFiles[0]?.path ?? null);
   const isPullRequest = state.source.type === 'pull-request';
   const isSwitchingSource = pendingSource != null;
-  const showAgentUnavailablePanel =
-    sidebarMode === 'walkthrough' &&
-    !narrativeWalkthrough &&
-    !walkthroughLoading &&
-    (walkthroughError?.code === 'CODEX_NOT_FOUND' ||
-      walkthroughError?.code === 'CLAUDE_NOT_FOUND' ||
-      walkthroughError?.code === 'OPENCODE_NOT_FOUND' ||
-      walkthroughError?.code === 'PI_NOT_FOUND');
 
   const repositoryPathParts = splitRepositoryPath(state.root);
   const sidebarSourceLabel =
@@ -1789,6 +1828,7 @@ export default function App() {
       void window.codiff.openFile(candidate.path, candidate.lineNumber).catch(() => {});
     },
     onOpenFile: openFile,
+    onReady: markInitialContentReady,
     onRefreshMarkdown: refreshMarkdownFile,
     onSaveCommentEdit: updateComment,
     onSelectPathFromScroll: updateSelectedPathFromScroll,
