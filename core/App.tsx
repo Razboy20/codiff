@@ -1706,7 +1706,7 @@ export default function App() {
             stageRevision={walkthroughProgress.stageRevision}
           />
         ) : (
-          'Thinking…'
+          <span className="startup-loading-message">Thinking…</span>
         )}
       </main>
     );
