@@ -1,11 +1,11 @@
 import { lazy, Suspense, type ComponentProps } from 'react';
 
 let modulePromise:
-  | Promise<{ default: typeof import('@nkzw/mdx-editor').MarkdownEditor }>
+  | Promise<{ default: typeof import('./MarkdownImageSource.tsx').ImageSourceMarkdownEditor }>
   | undefined;
 export const preloadMarkdownEditor = () =>
-  (modulePromise ??= import('@nkzw/mdx-editor').then(({ MarkdownEditor }) => ({
-    default: MarkdownEditor,
+  (modulePromise ??= import('./MarkdownImageSource.tsx').then(({ ImageSourceMarkdownEditor }) => ({
+    default: ImageSourceMarkdownEditor,
   })));
 
 const Editor = lazy(preloadMarkdownEditor);

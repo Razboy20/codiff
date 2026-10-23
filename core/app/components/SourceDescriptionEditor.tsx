@@ -1,6 +1,7 @@
-import { MarkdownEditor } from '@nkzw/mdx-editor';
+import type { MarkdownEditor } from '@nkzw/mdx-editor';
 import { imagePlugin } from '@nkzw/mdx-editor/core';
 import { useMemo, type ComponentProps } from 'react';
+import { ImageSourceMarkdownEditor } from './MarkdownImageSource.tsx';
 
 export default function SourceDescriptionEditor({
   onUploadAsset,
@@ -15,5 +16,5 @@ export default function SourceDescriptionEditor({
         : undefined,
     [onUploadAsset],
   );
-  return <MarkdownEditor {...props} additionalPlugins={plugins} />;
+  return <ImageSourceMarkdownEditor {...props} additionalPlugins={plugins} />;
 }
