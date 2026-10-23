@@ -1836,6 +1836,7 @@ export default function App({
     onToggleCollapsed: toggleCollapsed,
     onToggleViewed: toggleViewed,
     onUpdateComment: updateComment,
+    renderMarkdownAs: preferences.renderMarkdownAs,
     searchQuery: diffSearchQuery,
     showWhitespace,
     source: state.source,

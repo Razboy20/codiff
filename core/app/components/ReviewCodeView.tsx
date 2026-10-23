@@ -2629,6 +2629,7 @@ export function ReviewCodeView({
   onUpdateSourceDescription,
   onUpdateSourceTitle,
   onUploadSourceDescriptionAsset,
+  renderMarkdownAs = 'preview',
   reviewIdentityByPath,
   scrollTarget,
   searchQuery,
@@ -2694,6 +2695,7 @@ export function ReviewCodeView({
   onUpdateSourceDescription?: (body: string) => Promise<void> | void;
   onUpdateSourceTitle?: (title: string) => Promise<void> | void;
   onUploadSourceDescriptionAsset?: (file: File) => Promise<string> | string;
+  renderMarkdownAs?: CodiffPreferences['renderMarkdownAs'];
   reviewIdentityByPath?: ReadonlyMap<string, ReviewIdentity>;
   scrollTarget: ReviewScrollTarget | null;
   searchQuery: string;
@@ -2983,7 +2985,8 @@ export function ReviewCodeView({
           !isReadOnly &&
           isEditableWorkingTreeSection(source.type, file, section);
         const isMarkdownPreview =
-          canRenderMarkdown && (markdownPreviewSections.get(section.id) ?? true);
+          canRenderMarkdown &&
+          (markdownPreviewSections.get(section.id) ?? renderMarkdownAs === 'preview');
         const isSelected = block.fileSelected ?? block.selected ?? selectedPath === file.path;
         const reviewVersionPrefix = `${isMarkdownFilePath(file.path) ? markdownContentsVersion : 0}:${itemVersionByKey[reviewKey] ?? 0}:${block.id}:${
           reviewIdentity.fingerprint
@@ -3199,6 +3202,7 @@ export function ReviewCodeView({
     editingMarkdownSections,
     markdownContentsVersion,
     onLoadImageContent,
+    renderMarkdownAs,
     reviewBlocks,
     selectedPath,
     showWhitespace,
@@ -3268,6 +3272,10 @@ export function ReviewCodeView({
     (item: CodeViewItem<ReviewAnnotationMetadata>, meta: CodeViewItemMetadata) => {
       if (meta.isCollapsed) {
         onToggleCollapsed(meta.file, true, meta.reviewIdentity.key);
+      }
+      if (isMarkdownFilePath(meta.file.path)) {
+        // Keep the text diff while editing, even if `renderMarkdownAs` changes.
+        setMarkdownPreviewSections((current) => new Map(current).set(meta.section.id, false));
       }
       void codeEditing.startEdit(item, meta);
     },
@@ -3745,7 +3753,7 @@ export function ReviewCodeView({
             onReady?.();
           }
           const metadata = itemMetadata.get(context.item.id);
-          // Full Markdown is only needed for previews that reach the viewport.
+          // Load full Markdown once an item reaches the viewport so diffs can offer a preview.
           // Fetching every document before startup defeats CodeView's virtualization.
           if (
             !isReadOnly &&
@@ -3756,11 +3764,15 @@ export function ReviewCodeView({
             !metadata.isCollapsed &&
             isMarkdownFilePath(metadata.file.path) &&
             isPatchOnlyDiffSection(metadata.section) &&
-            (markdownPreviewSections.get(metadata.section.id) ?? true) &&
+            metadata.section.summary?.canLoad !== false &&
             !loadingMarkdownPreviews.current.has(context.item.fileDiff)
           ) {
             loadingMarkdownPreviews.current.add(context.item.fileDiff);
-            void loadSectionContents(metadata.file, metadata.section, onLoadSectionContents)
+            // Retry a failed load once; if it fails again, the file stays a text diff.
+            const load = () =>
+              loadSectionContents(metadata.file, metadata.section, onLoadSectionContents);
+            void load()
+              .catch(() => load())
               .then(() => setMarkdownContentsVersion((version) => version + 1))
               .catch(() => {});
           }
@@ -3825,7 +3837,6 @@ export function ReviewCodeView({
       itemMetrics,
       loadDiffFiles,
       loadingSectionIds,
-      markdownPreviewSections,
       onCreateComment,
       onFindDefinitions,
       onLoadSection,
@@ -3966,7 +3977,7 @@ export function ReviewCodeView({
     async (file: ChangedFile, section: DiffSection) => {
       clearCommentLineHighlight();
       if (
-        (markdownPreviewSections.get(section.id) ?? true) &&
+        (markdownPreviewSections.get(section.id) ?? renderMarkdownAs === 'preview') &&
         isEditableWorkingTreeSection(source.type, file, section)
       ) {
         if (refreshingMarkdownSectionsRef.current.has(section.id)) {
@@ -3987,7 +3998,7 @@ export function ReviewCodeView({
       }
       setMarkdownPreviewSections((current) => {
         const next = new Map(current);
-        next.set(section.id, !(current.get(section.id) ?? true));
+        next.set(section.id, !(current.get(section.id) ?? renderMarkdownAs === 'preview'));
         return next;
       });
       setEditingMarkdownSections((current) => {
@@ -3996,7 +4007,13 @@ export function ReviewCodeView({
         return next;
       });
     },
-    [clearCommentLineHighlight, markdownPreviewSections, onRefreshMarkdown, source.type],
+    [
+      clearCommentLineHighlight,
+      markdownPreviewSections,
+      onRefreshMarkdown,
+      renderMarkdownAs,
+      source.type,
+    ],
   );
 
   useEffect(() => {
@@ -4736,6 +4753,10 @@ export function ReviewCodeView({
                       }));
                       setEditingMarkdownSections((current) =>
                         new Set(current).add(meta.section.id),
+                      );
+                      // Keep the preview while editing, even if `renderMarkdownAs` changes.
+                      setMarkdownPreviewSections((current) =>
+                        new Map(current).set(meta.section.id, true),
                       );
                       if (meta.isCollapsed) {
                         onToggleCollapsed(meta.file, true, meta.reviewIdentity.key);
